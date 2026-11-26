@@ -219,3 +219,83 @@ pub fn builtin_profiles() -> ProfileStore {
     });
     store
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(id: &str) -> AppProfile {
+        AppProfile {
+            id: id.into(),
+            name: id.into(),
+            command: vec!["app".into(), "--flag".into()],
+            env: BTreeMap::from([("KEY".into(), "value".into())]),
+            mounts: vec![],
+            network: true,
+            workdir: None,
+            description: String::new(),
+        }
+    }
+
+    #[test]
+    fn add_validates() {
+        let mut s = ProfileStore::default();
+        let mut p = profile("x");
+        p.id = String::new();
+        assert!(s.add(p).is_err());
+        let mut p = profile("y");
+        p.command.clear();
+        assert!(s.add(p).is_err());
+        assert!(s.add(profile("ok")).is_ok());
+    }
+
+    #[test]
+    fn get_remove_list() {
+        let mut s = ProfileStore::default();
+        s.add(profile("a")).unwrap();
+        s.add(profile("b")).unwrap();
+        assert_eq!(s.list().len(), 2);
+        assert!(s.get("a").is_some());
+        s.remove("a").unwrap();
+        assert!(s.remove("a").is_err());
+        assert_eq!(s.list().len(), 1);
+    }
+
+    #[test]
+    fn render_launch_and_shell() {
+        let mut s = ProfileStore::default();
+        s.add(profile("app")).unwrap();
+        let spec = s.render_launch("app").unwrap();
+        assert_eq!(spec.env["KEY"], "value");
+        assert!(spec.network);
+        let sh = spec.to_shell();
+        assert!(sh.contains("env KEY=value"));
+        assert!(sh.contains("app --flag"));
+        assert!(s.render_launch("missing").is_err());
+    }
+
+    #[test]
+    fn shell_quotes_special_chars() {
+        let spec = LaunchSpec {
+            env: BTreeMap::from([("MSG".into(), "hello world".into())]),
+            command: vec!["run".into(), "a'b".into()],
+            mounts: vec![],
+            network: false,
+            workdir: None,
+        };
+        let sh = spec.to_shell();
+        assert!(sh.contains("MSG='hello world'"));
+        assert!(sh.contains("'a'\\''b'"));
+    }
+
+    #[test]
+    fn builtin_profiles_and_roundtrip() {
+        let s = builtin_profiles();
+        assert!(s.get("browser").is_some());
+        let path = std::env::temp_dir().join("sigmaos-app-env-test.json");
+        s.save(&path).unwrap();
+        let back = ProfileStore::load(&path).unwrap();
+        assert_eq!(back.profiles.len(), s.profiles.len());
+        let _ = std::fs::remove_file(&path);
+    }
+}
